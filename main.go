@@ -72,9 +72,9 @@ func (lh LoginHandler) respondWithSignupForm(w http.ResponseWriter, r *http.Requ
 	w.Write([]byte(`<html>
     <head></head>
     <body>
-        <form id="login" method="POST" action="">
-            <input type="text" name="username" placeholder="username" />
-            <input type="text" name="password" placeholder="password" />
+        <form id="login" method="POST" action="" accept-charset="utf-8">
+            <input type="text" name="username" required placeholder="username" />
+            <input type="password" name="password" required placeholder="password" />
             <input type="submit" name="submit" value="Login" />
         </form>
     </body>
