@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -102,8 +103,21 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Compare credentials
-	if user.Password != password {
+	/*
+	   When comparing credentials to prevent a timing attack, we need to use a constant time comparator.
+
+	   This ensures that regardless of how dissimlar the password it, the computer will always take the same amount of time to compare them.
+	   This prevents people from walking the solution space and looking for the password that takes longer to compute.
+
+	   The reason this is a thing, is that the first step for the majority of languages with == or === equality is to check the length,
+	   if they are different immediately say they can't be equal. Second, it will compare on some bit level (4 bit, 8 bit, 16 bit, 32 bit)
+	   at a time, so as soon as one of those is different, it'll immediately exit.
+
+	   As an attacker, they can take advantage of this by walking the solution space, (a, aa, aaa, aaaa, aaaaa, aaaaaa, aaaaaaa... etc) to first determine the length of the password.
+	   Then, once you have determined the length, you proceed to look for the character (aaaaaaa, abaaaaa, acaaaaa, acbaaaa, etc)
+	   at that length that takes the longest until you finally are granted access. A time consuming effort, but possible even across the internet.
+	*/
+	if subtle.ConstantTimeCompare([]byte(user.Password), []byte(password)) != 1 {
 		logrus.WithError(errors.New("password mismatch")).Warn("invalid login attempt")
 		http.Error(w, fmt.Sprintf("Incorrect password"), http.StatusBadRequest)
 		return
