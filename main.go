@@ -1,12 +1,14 @@
 package main
 
 import (
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/Sirupsen/logrus"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
 )
 
@@ -40,10 +42,44 @@ func (u *MemoryUserStore) Get(id string) (*User, error) {
 }
 
 // Save persists the provided user into the in-memory map if the user has a username
+// Also, it will overwrite the users plaintext password in memory with the hash equivalent
 func (u *MemoryUserStore) Save(user *User) error {
 	if user.Username == "" {
 		return fmt.Errorf("username required")
 	}
+
+	/*
+		bcrypt.DefaultCost is a constant that configures approximately how much work the computer will have to do to generate a hash.
+
+		A good practice is to set this value so that the login path of your application takes at least 500ms to run.
+		The reason for this is to makes a brute force attack take some time. This includes both an online brute force, as well as an offline brute force.
+
+		Using an expensive hash function does enable a secondary attack that you will have to solve.
+		This attack is a Denial-of-Service against your authentication servers.
+		The reason why you want a cost to hashing is to slow down an attacker in a offline brute force.
+		Imagine the case when your database gets leaked somehow, even with direct access to the target hash it will take the attacker
+		a fair amount of time to figure out a plaintext password that generates the same hash for a user.
+
+		At this point, you might be about to ask, can't someone precompute the output of the hashing function?
+
+		Absolutely! The output of this technique is called rainbow tables.
+
+		To combat this, the bcrypt hashing function automatically individually "salts" the passwords.
+		So your password becomes "mypasswordsalted" before it is run through the hash function.
+		A niceity of bcrypt is that it stores these salts for you in the hash, as well as the Cost that created the hash.
+		The reason this is so nice, is that it enables you to rotate the hash to a higher cost as computational power gets better.
+
+		We rotate as computational power gets better so we can maintain a long enough window so we can:
+		• notify end users of a compromise and enable a password reset for everyone on the website
+		• give end users the time to change their password on websites they may have used the same password on
+	*/
+	pass, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("error when hashing password: %s", err.Error())
+	}
+
+	// Store Hash
+	user.Password = string(pass)
 
 	u.users[user.Username] = user
 	return nil
@@ -103,25 +139,16 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	/*
-	   When comparing credentials to prevent a timing attack, we need to use a constant time comparator.
-
-	   This ensures that regardless of how dissimlar the password it, the computer will always take the same amount of time to compare them.
-	   This prevents people from walking the solution space and looking for the password that takes longer to compute.
-
-	   The reason this is a thing, is that the first step for the majority of languages with == or === equality is to check the length,
-	   if they are different immediately say they can't be equal. Second, it will compare on some bit level (4 bit, 8 bit, 16 bit, 32 bit)
-	   at a time, so as soon as one of those is different, it'll immediately exit.
-
-	   As an attacker, they can take advantage of this by walking the solution space, (a, aa, aaa, aaaa, aaaaa, aaaaaa, aaaaaaa... etc) to first determine the length of the password.
-	   Then, once you have determined the length, you proceed to look for the character (aaaaaaa, abaaaaa, acaaaaa, acbaaaa, etc)
-	   at that length that takes the longest until you finally are granted access. A time consuming effort, but possible even across the internet.
-	*/
-	if subtle.ConstantTimeCompare([]byte(user.Password), []byte(password)) != 1 {
+	// Compare credentials with hashing function
+	// As before, timing attacks are still possible. Internally CompareHashAndPassword uses subtle.ConstantTimeCompare to prevent timing attacks
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		logrus.WithError(errors.New("password mismatch")).Warn("invalid login attempt")
 		http.Error(w, fmt.Sprintf("Incorrect password"), http.StatusBadRequest)
 		return
 	}
+
+	// Showcase individual salting everytime we restart server
+	spew.Dump(user)
 
 	// Successful auth!
 	w.Header().Set("Location", "/secret")
