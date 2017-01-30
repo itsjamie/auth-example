@@ -155,15 +155,38 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 
 	// Successful auth!
 	w.Header().Set("Location", "/secret")
+	http.SetCookie(w, &http.Cookie{
+		Name:  "id",
+		Value: user.Username,
+	})
 	w.WriteHeader(http.StatusSeeOther)
 }
 
+type SecretHandler struct {
+	UserStore UserStore
+}
+
 // SecretHandler will respond with a text/html representation when hit with a GET.
-func SecretHandler(w http.ResponseWriter, r *http.Request) {
+func (lh SecretHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("id")
+	if err != nil {
+		logrus.WithError(err).Error("failed to retrieve cookie \"id\"")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	user, err := lh.UserStore.Get(cookie.Value)
+	if err != nil {
+		logrus.WithError(err).Error("failed to retrieve user with cookie data")
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
 	w.Write([]byte(`<html>
     <head></head>
     <body>
-        <p>This is secret data</p>
+        <p>This is secret data for you</p>
+        <ul><li>Username: ` + user.Username + `</li><li>Password Hash: ` + user.Password + `</li>
     </body>
 </html>`))
 }
@@ -181,13 +204,20 @@ func main() {
 		Password: "12345",
 	}, "12345")
 
+	userStore.Save(&User{
+		Username: "fixation",
+		Password: "neverneeded",
+	}, "neverneeded")
+
 	r := mux.NewRouter()
 
 	r.Handle("/login", LoginHandler{
 		UsersStore: userStore,
 	}).Methods("GET", "POST")
 
-	r.HandleFunc("/secret", SecretHandler).Methods("GET")
+	r.Handle("/secret", SecretHandler{
+		UserStore: userStore,
+	}).Methods("GET")
 
 	if err := http.ListenAndServe(":8080", r); err != nil {
 		logrus.WithError(err).WithField("port", "8080").Error("failed to start HTTP server")
