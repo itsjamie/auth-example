@@ -23,7 +23,7 @@ type User struct {
 
 type UserStore interface {
 	Get(id string) (*User, error)
-	Save(user *User) error
+	Save(user *User, newPassword string) error
 }
 
 // MemoryUserStore is an implementation of UsersStore that using an in-memory map to store users
@@ -43,43 +43,31 @@ func (u *MemoryUserStore) Get(id string) (*User, error) {
 
 // Save persists the provided user into the in-memory map if the user has a username
 // Also, it will overwrite the users plaintext password in memory with the hash equivalent
-func (u *MemoryUserStore) Save(user *User) error {
+func (u *MemoryUserStore) Save(user *User, newPassword string) error {
 	if user.Username == "" {
 		return fmt.Errorf("username required")
 	}
 
 	/*
-		bcrypt.DefaultCost is a constant that configures approximately how much work the computer will have to do to generate a hash.
-
-		A good practice is to set this value so that the login path of your application takes at least 500ms to run.
-		The reason for this is to makes a brute force attack take some time. This includes both an online brute force, as well as an offline brute force.
-
 		Using an expensive hash function does enable a secondary attack that you will have to solve.
 		This attack is a Denial-of-Service against your authentication servers.
 		The reason why you want a cost to hashing is to slow down an attacker in a offline brute force.
 		Imagine the case when your database gets leaked somehow, even with direct access to the target hash it will take the attacker
 		a fair amount of time to figure out a plaintext password that generates the same hash for a user.
 
-		At this point, you might be about to ask, can't someone precompute the output of the hashing function?
-
-		Absolutely! The output of this technique is called rainbow tables.
-
-		To combat this, the bcrypt hashing function automatically individually "salts" the passwords.
-		So your password becomes "mypasswordsalted" before it is run through the hash function.
-		A niceity of bcrypt is that it stores these salts for you in the hash, as well as the Cost that created the hash.
-		The reason this is so nice, is that it enables you to rotate the hash to a higher cost as computational power gets better.
-
-		We rotate as computational power gets better so we can maintain a long enough window so we can:
+		We use a costly hash function so we can maintain a long enough window with offline attacks so we can:
 		• notify end users of a compromise and enable a password reset for everyone on the website
 		• give end users the time to change their password on websites they may have used the same password on
 	*/
-	pass, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("error when hashing password: %s", err.Error())
-	}
+	if newPassword != "" {
+		pass, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("error when hashing password: %s", err.Error())
+		}
 
-	// Store Hash
-	user.Password = string(pass)
+		// Store Hash
+		user.Password = string(pass)
+	}
 
 	u.users[user.Username] = user
 	return nil
@@ -131,7 +119,6 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 	password := r.PostForm.Get("password")
 
 	// Fetch Authentication from persistence
-
 	user, err := lh.UsersStore.Get(username)
 	if err != nil {
 		logrus.WithError(err).Warn("invalid login attempt")
@@ -146,6 +133,22 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 		http.Error(w, fmt.Sprintf("Incorrect password"), http.StatusBadRequest)
 		return
 	}
+
+	// We only need to include the below after we've done our first hash upgrade
+	// Until then, it's excess work we don't need to do when we targetCost could load from environment, or be part of binary
+	/*
+		hashCost, err := bcrypt.Cost([]byte(user.Password))
+		if err != nil {
+		    // this error should never occur because we didn't error above
+		    logrus.WithError(err).Error("failed to determine hash cost")
+		    http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		    return
+		}
+		if hashCost != targetCost {
+		    // Update hash to new cost
+		    lh.UserStore.Save(user, password)
+		}
+	*/
 
 	// Showcase individual salting everytime we restart server
 	spew.Dump(user)
@@ -176,7 +179,7 @@ func main() {
 	userStore.Save(&User{
 		Username: "jamie",
 		Password: "12345",
-	})
+	}, "12345")
 
 	r := mux.NewRouter()
 
