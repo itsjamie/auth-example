@@ -8,7 +8,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
 )
 
@@ -133,25 +132,6 @@ func (lh LoginHandler) handleSignupFormPost(w http.ResponseWriter, r *http.Reque
 		http.Error(w, fmt.Sprintf("Incorrect password"), http.StatusBadRequest)
 		return
 	}
-
-	// We only need to include the below after we've done our first hash upgrade
-	// Until then, it's excess work we don't need to do when we targetCost could load from environment, or be part of binary
-	/*
-		hashCost, err := bcrypt.Cost([]byte(user.Password))
-		if err != nil {
-		    // this error should never occur because we didn't error above
-		    logrus.WithError(err).Error("failed to determine hash cost")
-		    http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		    return
-		}
-		if hashCost != targetCost {
-		    // Update hash to new cost
-		    lh.UserStore.Save(user, password)
-		}
-	*/
-
-	// Showcase individual salting everytime we restart server
-	spew.Dump(user)
 
 	// Successful auth!
 	w.Header().Set("Location", "/secret")
